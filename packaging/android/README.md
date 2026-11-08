@@ -2,7 +2,9 @@
 
 The desktop app's engine and interface in an Android app, for arm64 phones and tablets (a
 foldable unfolded is the best fit: the interface is the desktop one). The app itself is
-`apps/solidcraft-android`; this folder is the APK around it.
+`apps/solidcraft-android`; this folder is the APK around it: the manifest, the launcher icon and
+`build.sh`, which builds the library with cargo-ndk and packs and signs the APK with the Android
+SDK's own tools (no Gradle: the app has no Java code).
 
 ## Getting the APK
 
@@ -12,7 +14,8 @@ download `SolidCraft-android-N.apk`, open it, and allow installing apps from the
 manager when Android asks. A newer build installs over an older one and keeps its settings.
 The APK is large (about 180 MB): the whole CAD engine, its fonts and the render library.
 
-To build it yourself: `packaging/android/build.sh` (its first lines say what it needs).
+To build it yourself: `packaging/android/build.sh` (its first lines say what it needs); the APK
+is `packaging/android/build/SolidCraft.apk`.
 
 ## Using it
 

@@ -7,7 +7,7 @@ use jni::objects::{JObject, JValue};
 use jni::{JavaVM, jni_sig, jni_str};
 use winit::platform::android::activity::AndroidApp;
 
-/// The app's package, as in packaging/android/app/build.gradle.kts (`applicationId`).
+/// The app's package, as in packaging/android/AndroidManifest.xml.
 pub const PACKAGE: &str = "io.github.maartentrekop.solidcraft";
 
 /// Whether the app may manage all files: `None` when Android could not be asked.

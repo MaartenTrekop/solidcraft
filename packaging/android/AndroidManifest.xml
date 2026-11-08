@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<!-- Keep the package in step with PACKAGE in apps/solidcraft-android/src/storage.rs. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.github.maartentrekop.solidcraft">
 
     <!-- Open and save designs anywhere in the phone's storage, through file paths
          (apps/solidcraft-android/src/storage.rs). Android grants it on its settings page. -->
@@ -8,11 +10,14 @@
     <uses-feature android:name="android.hardware.vulkan.version" android:required="false" />
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
 
-    <!-- No Java code: NativeActivity loads libsolidcraft_android.so and runs android_main. -->
+    <!-- No Java code: NativeActivity loads libsolidcraft_android.so and runs android_main.
+         The library is stored uncompressed and page aligned, so Android maps it straight from
+         the APK instead of unpacking a copy (extractNativeLibs). -->
     <application
         android:label="SolidCraft"
         android:icon="@mipmap/ic_launcher"
         android:hasCode="false"
+        android:extractNativeLibs="false"
         android:resizeableActivity="true"
         android:appCategory="productivity"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">

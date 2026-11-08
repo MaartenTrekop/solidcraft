@@ -7,7 +7,7 @@ license.workspace = true
 publish = false
 
 # The app is a shared library that Android's NativeActivity loads (libsolidcraft_android.so,
-# named in packaging/android/app/src/main/AndroidManifest.xml). On other systems the crate builds the
+# named in packaging/android/AndroidManifest.xml). On other systems the crate builds the
 # touch translation only, so its tests run with the rest of the workspace.
 [lib]
 crate-type = ["cdylib", "rlib"]
