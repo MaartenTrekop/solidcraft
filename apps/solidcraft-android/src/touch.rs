@@ -1,4 +1,5 @@
-//! Fingers to pointer: one finger is the left mouse button, two or more are a camera gesture.
+//! Fingers to pointer: one finger is the left mouse button, two or more are a camera gesture, and
+//! two fingers tapped together are a right click.
 //!
 //! egui-winit turns the first finger of a touch into the left button the moment it lands, so the
 //! second finger of a pinch arrives after the first has already pressed: on the model that starts
@@ -7,20 +8,24 @@
 //! for egui's multi-touch state), pressing only once a lone finger moves, is held still, or
 //! lifts (a tap). A second finger before then makes the touch a gesture, which presses nothing;
 //! the camera reads the gesture from egui's multi-touch state (`navigation::handle` in
-//! solidcraft-ui-egui).
+//! solidcraft-ui-egui). Two fingers that lift soon without moving were a tap: a right click
+//! where the first one landed, which opens the context menus the desktop opens on a right click.
 //!
 //! Android delivers a mouse's clicks as touches too (winit 0.30 has no other mouse input there),
 //! so every pointer event in a frame comes from a finger or a click, never from anything else.
 
 use egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput, TouchId, TouchPhase};
 
-/// How far (points) a lone finger moves before it presses: closer, it is still a tap or the start
-/// of a gesture.
+/// How far (points) a finger moves before it counts as moving: closer, a lone finger is still a
+/// tap or the start of a gesture, and two fingers still a tap.
 pub const SLOP: f32 = 8.0;
 
 /// How long (seconds) a lone finger held still waits before it presses: a hold (Select Other, a
 /// drag that starts slowly) needs the button down, and a second finger within it makes a gesture.
 pub const HOLD: f64 = 0.15;
+
+/// The longest (seconds) two fingers may stay down and still be a tap (a right click).
+pub const TWO_FINGER_TAP: f64 = 0.4;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum State {
@@ -30,23 +35,35 @@ enum State {
     Pending { id: TouchId, at: Pos2, since: f64 },
     /// One finger down with the left button pressed.
     Pressed { id: TouchId },
-    /// Two or more fingers came down: nothing presses until every finger is up.
-    Gesture,
+    /// Two or more fingers came down: nothing presses until every finger is up. `tap`: where the
+    /// first finger landed and when, while the touch can still be a two-finger tap.
+    Gesture { tap: Option<(Pos2, f64)> },
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Finger {
+    id: TouchId,
+    /// Where it is now.
+    at: Pos2,
+    /// Where it landed.
+    from: Pos2,
 }
 
 /// The touch-to-pointer translation, kept from frame to frame.
 #[derive(Debug)]
 pub struct TouchRouter {
     state: State,
-    /// The fingers down, in the order they landed, each where it was last.
-    fingers: Vec<(TouchId, Pos2)>,
+    /// The fingers down, in the order they landed.
+    fingers: Vec<Finger>,
     /// A tap's release, sent at the start of the next frame so the press is seen on its own first.
-    release: Option<Pos2>,
+    release: Option<(Pos2, PointerButton)>,
+    /// The keyboard's modifiers as the input last said (a Bluetooth keyboard's Shift or Ctrl).
+    modifiers: Modifiers,
 }
 
 impl Default for TouchRouter {
     fn default() -> Self {
-        Self { state: State::Idle, fingers: Vec::new(), release: None }
+        Self { state: State::Idle, fingers: Vec::new(), release: None, modifiers: Modifiers::NONE }
     }
 }
 
@@ -55,10 +72,9 @@ impl TouchRouter {
     /// even without new input: a finger held still is about to press, or a tap's release is due.
     pub fn route(&mut self, raw: &mut RawInput) -> Option<f64> {
         let now = raw.time.unwrap_or(0.0);
-        let modifiers = raw.modifiers;
         let mut out = Vec::with_capacity(raw.events.len() + 4);
-        if let Some(pos) = self.release.take() {
-            out.push(button(pos, false, modifiers));
+        if let Some((pos, which)) = self.release.take() {
+            out.push(button(pos, which, false, self.modifiers));
             out.push(Event::PointerGone);
         }
         for event in std::mem::take(&mut raw.events) {
@@ -67,7 +83,11 @@ impl TouchRouter {
                 Event::PointerMoved(_) | Event::PointerButton { .. } | Event::PointerGone => {}
                 Event::Touch { id, phase, pos, .. } => {
                     out.push(event);
-                    self.touch(id, phase, pos, now, modifiers, &mut out);
+                    self.touch(id, phase, pos, now, &mut out);
+                }
+                Event::ModifiersChanged(modifiers) => {
+                    self.modifiers = modifiers;
+                    out.push(event);
                 }
                 other => out.push(other),
             }
@@ -75,7 +95,7 @@ impl TouchRouter {
         if let State::Pending { id, at, since } = self.state
             && now - since >= HOLD
         {
-            press(at, modifiers, &mut out);
+            press(at, self.modifiers, &mut out);
             self.state = State::Pressed { id };
         }
         raw.events = out;
@@ -91,38 +111,41 @@ impl TouchRouter {
         self.state != State::Idle || self.release.is_some()
     }
 
-    fn touch(&mut self, id: TouchId, phase: TouchPhase, pos: Pos2, now: f64, modifiers: Modifiers, out: &mut Vec<Event>) {
+    fn touch(&mut self, id: TouchId, phase: TouchPhase, pos: Pos2, now: f64, out: &mut Vec<Event>) {
         if !(pos.x.is_finite() && pos.y.is_finite()) {
             return;
         }
+        let modifiers = self.modifiers;
         match phase {
             TouchPhase::Start => {
-                self.fingers.retain(|(f, _)| *f != id);
-                self.fingers.push((id, pos));
+                self.fingers.retain(|f| f.id != id);
+                self.fingers.push(Finger { id, at: pos, from: pos });
                 self.state = match self.state {
                     State::Idle if self.fingers.len() == 1 => {
                         out.push(Event::PointerMoved(pos));
                         State::Pending { id, at: pos, since: now }
                     }
+                    State::Pending { at, since, .. } if self.fingers.len() == 2 => State::Gesture { tap: Some((at, since)) },
                     State::Pressed { id: first } => {
                         // Too late for a gesture that presses nothing: let go where the first
                         // finger is, and the rest of the touch is the gesture.
-                        let at = self.finger(first).unwrap_or(pos);
-                        out.push(button(at, false, modifiers));
-                        State::Gesture
+                        let at = self.finger(first).map_or(pos, |f| f.at);
+                        out.push(button(at, PointerButton::Primary, false, modifiers));
+                        State::Gesture { tap: None }
                     }
-                    _ => State::Gesture,
+                    _ => State::Gesture { tap: None },
                 };
-                if self.state == State::Gesture {
+                if matches!(self.state, State::Gesture { .. }) {
                     self.point_at_centre(out);
                 }
             }
             TouchPhase::Move => {
-                let Some(finger) = self.fingers.iter_mut().find(|(f, _)| *f == id) else { return };
-                finger.1 = pos;
+                let Some(finger) = self.fingers.iter_mut().find(|f| f.id == id) else { return };
+                finger.at = pos;
+                let moved = pos.distance(finger.from) > SLOP;
                 match self.state {
                     State::Pending { id: first, at, .. } if first == id => {
-                        if pos.distance(at) > SLOP {
+                        if moved {
                             // A drag: it starts where the finger landed, not where it is now.
                             press(at, modifiers, out);
                             self.state = State::Pressed { id };
@@ -130,20 +153,25 @@ impl TouchRouter {
                         out.push(Event::PointerMoved(pos));
                     }
                     State::Pressed { id: first } if first == id => out.push(Event::PointerMoved(pos)),
-                    State::Gesture => self.point_at_centre(out),
+                    State::Gesture { tap } => {
+                        if moved && tap.is_some() {
+                            self.state = State::Gesture { tap: None };
+                        }
+                        self.point_at_centre(out);
+                    }
                     _ => {}
                 }
             }
             TouchPhase::End | TouchPhase::Cancel => {
                 // A lifted finger says where it left; a cancelled one may not mean it.
-                let at = if phase == TouchPhase::End { pos } else { self.finger(id).unwrap_or(pos) };
-                self.fingers.retain(|(f, _)| *f != id);
+                let at = if phase == TouchPhase::End { pos } else { self.finger(id).map_or(pos, |f| f.at) };
+                self.fingers.retain(|f| f.id != id);
                 match self.state {
                     State::Pending { id: first, at: down, .. } if first == id => {
                         if phase == TouchPhase::End {
                             // A tap: pressed now, let go on the next frame.
                             press(down, modifiers, out);
-                            self.release = Some(down);
+                            self.release = Some((down, PointerButton::Primary));
                         } else {
                             out.push(Event::PointerGone);
                         }
@@ -151,21 +179,28 @@ impl TouchRouter {
                     }
                     State::Pressed { id: first } if first == id => {
                         out.push(Event::PointerMoved(at));
-                        out.push(button(at, false, modifiers));
+                        out.push(button(at, PointerButton::Primary, false, modifiers));
                         out.push(Event::PointerGone);
                         self.state = State::Idle;
                     }
-                    State::Gesture if !self.fingers.is_empty() => self.point_at_centre(out),
+                    State::Gesture { .. } if !self.fingers.is_empty() => self.point_at_centre(out),
                     _ => {}
                 }
                 // Every finger is up: nothing stays pressed, whatever was missed on the way.
                 if self.fingers.is_empty() {
                     match self.state {
                         State::Pressed { .. } => {
-                            out.push(button(at, false, modifiers));
+                            out.push(button(at, PointerButton::Primary, false, modifiers));
                             out.push(Event::PointerGone);
                         }
-                        State::Pending { .. } | State::Gesture => out.push(Event::PointerGone),
+                        State::Gesture { tap: Some((down, since)) } if phase == TouchPhase::End && now - since <= TWO_FINGER_TAP => {
+                            // Two fingers tapped together: a right click where the first landed,
+                            // let go on the next frame.
+                            out.push(Event::PointerMoved(down));
+                            out.push(button(down, PointerButton::Secondary, true, modifiers));
+                            self.release = Some((down, PointerButton::Secondary));
+                        }
+                        State::Pending { .. } | State::Gesture { .. } => out.push(Event::PointerGone),
                         State::Idle => {}
                     }
                     self.state = State::Idle;
@@ -174,8 +209,8 @@ impl TouchRouter {
         }
     }
 
-    fn finger(&self, id: TouchId) -> Option<Pos2> {
-        self.fingers.iter().find(|(f, _)| *f == id).map(|(_, p)| *p)
+    fn finger(&self, id: TouchId) -> Option<Finger> {
+        self.fingers.iter().find(|f| f.id == id).copied()
     }
 
     /// The pointer follows the middle of the fingers during a gesture: a pinch zooms about it.
@@ -184,18 +219,18 @@ impl TouchRouter {
             return;
         }
         let n = self.fingers.len() as f32;
-        let sum = self.fingers.iter().fold(egui::Vec2::ZERO, |s, (_, p)| s + p.to_vec2());
+        let sum = self.fingers.iter().fold(egui::Vec2::ZERO, |s, f| s + f.at.to_vec2());
         out.push(Event::PointerMoved((sum / n).to_pos2()));
     }
 }
 
-fn button(pos: Pos2, pressed: bool, modifiers: Modifiers) -> Event {
-    Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers }
+fn button(pos: Pos2, which: PointerButton, pressed: bool, modifiers: Modifiers) -> Event {
+    Event::PointerButton { pos, button: which, pressed, modifiers }
 }
 
 fn press(at: Pos2, modifiers: Modifiers, out: &mut Vec<Event>) {
     out.push(Event::PointerMoved(at));
-    out.push(button(at, true, modifiers));
+    out.push(button(at, PointerButton::Primary, true, modifiers));
 }
 
 /// Android's Back button (and gesture) as Escape: it cancels a tool or closes a dialog, as Esc does
@@ -226,15 +261,19 @@ mod tests {
         raw.events.into_iter().filter(|e| !matches!(e, Event::Touch { .. })).collect()
     }
 
-    /// The left button's presses (true) and releases (false), in order.
-    fn buttons(events: &[Event]) -> Vec<(bool, Pos2)> {
+    /// The presses (true) and releases (false) of `which`, in order, with where they were.
+    fn presses(events: &[Event], which: PointerButton) -> Vec<(bool, Pos2)> {
         events
             .iter()
             .filter_map(|e| match e {
-                Event::PointerButton { pressed, pos, button: PointerButton::Primary, .. } => Some((*pressed, *pos)),
+                Event::PointerButton { pressed, pos, button, .. } if *button == which => Some((*pressed, *pos)),
                 _ => None,
             })
             .collect()
+    }
+
+    fn buttons(events: &[Event]) -> Vec<(bool, Pos2)> {
+        presses(events, PointerButton::Primary)
     }
 
     #[test]
@@ -282,9 +321,32 @@ mod tests {
         all.extend(frame(&mut r, 0.6, vec![touch(1, TouchPhase::End, 0.0, 50.0)]));
         all.extend(frame(&mut r, 0.7, vec![touch(2, TouchPhase::End, 100.0, 50.0)]));
         assert!(buttons(&all).is_empty(), "{all:?}");
+        assert!(presses(&all, PointerButton::Secondary).is_empty(), "a gesture that moved is no tap");
         assert!(all.iter().any(|e| matches!(e, Event::PointerMoved(p) if *p == Pos2::new(50.0, 50.0))), "the pointer follows the middle");
         assert!(matches!(all.last(), Some(Event::PointerGone)));
         assert!(!r.active());
+    }
+
+    #[test]
+    fn two_fingers_tapped_together_right_click_where_the_first_landed() {
+        let mut r = TouchRouter::default();
+        frame(&mut r, 0.0, vec![touch(1, TouchPhase::Start, 20.0, 30.0)]);
+        frame(&mut r, 0.02, vec![touch(2, TouchPhase::Start, 60.0, 30.0)]);
+        let lift = frame(&mut r, 0.15, vec![touch(1, TouchPhase::End, 21.0, 30.0), touch(2, TouchPhase::End, 61.0, 31.0)]);
+        assert_eq!(presses(&lift, PointerButton::Secondary), vec![(true, Pos2::new(20.0, 30.0))]);
+        assert!(buttons(&lift).is_empty());
+        let next = frame(&mut r, 0.16, Vec::new());
+        assert_eq!(presses(&next, PointerButton::Secondary), vec![(false, Pos2::new(20.0, 30.0))]);
+        assert!(!r.active());
+    }
+
+    #[test]
+    fn two_fingers_held_too_long_are_no_right_click() {
+        let mut r = TouchRouter::default();
+        frame(&mut r, 0.0, vec![touch(1, TouchPhase::Start, 20.0, 30.0)]);
+        frame(&mut r, 0.02, vec![touch(2, TouchPhase::Start, 60.0, 30.0)]);
+        let lift = frame(&mut r, 1.0, vec![touch(1, TouchPhase::End, 20.0, 30.0), touch(2, TouchPhase::End, 60.0, 30.0)]);
+        assert!(presses(&lift, PointerButton::Secondary).is_empty());
     }
 
     #[test]
@@ -296,6 +358,7 @@ mod tests {
         assert_eq!(buttons(&second), vec![(false, Pos2::new(30.0, 0.0))]);
         let rest = frame(&mut r, 0.4, vec![touch(1, TouchPhase::End, 30.0, 0.0), touch(2, TouchPhase::End, 100.0, 0.0)]);
         assert!(buttons(&rest).is_empty());
+        assert!(presses(&rest, PointerButton::Secondary).is_empty());
     }
 
     #[test]
@@ -310,6 +373,15 @@ mod tests {
         let out = frame(&mut r, 0.0, events);
         assert!(buttons(&out).is_empty());
         assert!(out.iter().any(|e| matches!(e, Event::Text(t) if t == "a")), "other input passes through");
+    }
+
+    #[test]
+    fn presses_carry_the_keyboard_modifiers() {
+        let mut r = TouchRouter::default();
+        let shift = Modifiers { shift: true, ..Modifiers::NONE };
+        frame(&mut r, 0.0, vec![Event::ModifiersChanged(shift), touch(1, TouchPhase::Start, 0.0, 0.0)]);
+        let lift = frame(&mut r, 0.05, vec![touch(1, TouchPhase::End, 0.0, 0.0)]);
+        assert!(lift.iter().any(|e| matches!(e, Event::PointerButton { pressed: true, modifiers, .. } if modifiers.shift)));
     }
 
     #[test]

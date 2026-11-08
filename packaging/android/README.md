@@ -17,7 +17,8 @@ To build it yourself: `packaging/android/build.sh` (its first lines say what it 
 
 - **Touch**: a tap is a click; one finger drags (geometry, a selection box, sliders, panels);
   two fingers turn the view when they move together or zoom when they pinch, whichever they
-  start with; three fingers pan. Holding a finger still is a held mouse button (Select Other).
+  start with; three fingers pan. Two fingers tapped together are a right click (context menus).
+  Holding a finger still is a held mouse button (Select Other).
 - **Back** is Escape: it cancels a tool or closes a dialog.
 - **Files**: Open and Save show SolidCraft's own file dialog. The first time, tap **Allow** and
   turn on "Allow access to manage all files" for SolidCraft: the app then opens and saves

@@ -765,6 +765,14 @@ fn find_system_cjk_font() -> Option<Vec<u8>> {
         }
     }
 
+    // Android keeps its fonts (Noto CJK among them) in one flat folder.
+    #[cfg(target_os = "android")]
+    {
+        if let Some(bytes) = scan_dir_for_font(std::path::Path::new("/system/fonts"), 1, is_cjk_font_name) {
+            return Some(bytes);
+        }
+    }
+
     None
 }
 
@@ -963,6 +971,8 @@ fn chinese_font_dirs() -> Vec<std::path::PathBuf> {
             dirs.push(std::path::PathBuf::from(home).join(".fonts"));
         }
     }
+    #[cfg(target_os = "android")]
+    dirs.push(std::path::PathBuf::from("/system/fonts"));
     dirs
 }
 

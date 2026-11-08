@@ -1025,7 +1025,7 @@ fn touch_gesture(ctx: &egui::Context, touch: &egui::MultiTouchInfo) -> TouchGest
     if touch.num_touches >= 3 {
         return TouchGesture::Pan;
     }
-    let id = egui::Id::new("sc_touch_gesture");
+    let id = egui::Id::unique("sc_touch_gesture");
     ctx.data_mut(|d| {
         let lock = d.get_temp_mut_or_default::<TouchLock>(id);
         if lock.start != touch.start_time {

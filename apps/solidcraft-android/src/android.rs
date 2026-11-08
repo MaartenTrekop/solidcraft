@@ -79,6 +79,12 @@ fn export_env(dirs: &Dirs) {
         // Android's own threads in the process don't read these variables.
         unsafe { std::env::set_var(name, &dir) };
     }
+    // Android's own fonts: sketch text can use them, and the interface finds its CJK fallback
+    // (NotoSansCJK) there.
+    if std::env::var_os("SOLIDCRAFT_FONT_DIRS").is_none() {
+        // SAFETY: as above.
+        unsafe { std::env::set_var("SOLIDCRAFT_FONT_DIRS", "/system/fonts") };
+    }
     if let Err(e) = std::fs::create_dir_all(&dirs.settings) {
         log::warn!("folder {}: {e}", dirs.settings.display());
     }

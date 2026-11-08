@@ -369,7 +369,7 @@ fn draw(ctx: &egui::Context, request: &mut Request, own: &Path, access: Option<b
     let screen = ctx.content_rect();
     let width = (screen.width() - 32.0).clamp(260.0, 760.0);
     let height = (screen.height() - 48.0).clamp(260.0, 980.0);
-    let _ = egui::Modal::new(egui::Id::new("solidcraft_android_files")).show(ctx, |ui| {
+    let _ = egui::Modal::new(egui::Id::unique("solidcraft_android_files")).show(ctx, |ui| {
         ui.set_width(width);
         ui.spacing_mut().button_padding = egui::vec2(12.0, 8.0);
         ui.spacing_mut().item_spacing.y = 6.0;
