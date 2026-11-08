@@ -25,7 +25,8 @@ if [ -z "$sdk" ] || [ ! -d "$sdk/build-tools" ]; then
     exit 1
 fi
 tools="$(ls -d "$sdk"/build-tools/* | sort -V | tail -n 1)"
-platform="$(ls -d "$sdk"/platforms/android-* | sort -V | tail -n 1)/android.jar"
+# The newest released platform (android-NN), not a preview (android-NN.N-beta).
+platform="$(ls -d "$sdk"/platforms/android-* | grep -E '/android-[0-9]+$' | sort -V | tail -n 1)/android.jar"
 echo "build-tools: $tools"
 echo "platform: $platform"
 
