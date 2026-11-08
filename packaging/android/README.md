@@ -10,6 +10,7 @@ Every push to the `android` branch builds one on GitHub Actions (`.github/workfl
 and publishes it as a pre-release named "SolidCraft Android N". On the phone, open the release,
 download `SolidCraft-android-N.apk`, open it, and allow installing apps from the browser or file
 manager when Android asks. A newer build installs over an older one and keeps its settings.
+The APK is large (about 180 MB): the whole CAD engine, its fonts and the render library.
 
 To build it yourself: `packaging/android/build.sh` (its first lines say what it needs).
 

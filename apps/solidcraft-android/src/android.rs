@@ -272,7 +272,7 @@ impl eframe::App for Host {
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         content_ui(&mut self.solve, ui);
-        self.files.show(ui.ctx());
+        self.files.show(ui.ctx(), &self.solve.preferences.language);
         // After the frame's UI, so a setting changed in it is written now: Android may end the
         // app without warning once it is in the background.
         let now = Instant::now();

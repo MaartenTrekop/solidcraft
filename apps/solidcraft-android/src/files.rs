@@ -12,6 +12,7 @@ use std::rc::Rc;
 use std::task::{Context, Poll, Waker};
 
 use solidcraft_ui_egui::FilePickerFuture;
+use solidcraft_ui_egui::i18n::{tr, tr_label};
 use winit::platform::android::activity::AndroidApp;
 
 use crate::storage;
@@ -176,8 +177,9 @@ impl Picker {
         answer(&request.answer, chosen.map(|p| p.to_string_lossy().into_owned()));
     }
 
-    /// Draw the dialog, if one is open.
-    pub fn show(&self, ctx: &egui::Context) {
+    /// Draw the dialog, if one is open, in the app's language (`language`: its id).
+    pub fn show(&self, ctx: &egui::Context, language: &str) {
+        let _language = solidcraft_ui_egui::i18n::scope(language);
         let action = {
             let mut guard = self.0.borrow_mut();
             let state = &mut *guard;
@@ -374,8 +376,8 @@ fn draw(ctx: &egui::Context, request: &mut Request, own: &Path, access: Option<b
         ui.spacing_mut().button_padding = egui::vec2(12.0, 8.0);
         ui.spacing_mut().item_spacing.y = 6.0;
         ui.heading(match request.kind {
-            Kind::Open => "Open",
-            Kind::Save => "Save as",
+            Kind::Open => tr("ui.open"),
+            Kind::Save => tr("ui.save_as"),
         });
         ui.horizontal_wrapped(|ui| {
             for (label, path) in places(own) {
@@ -396,7 +398,7 @@ fn draw(ctx: &egui::Context, request: &mut Request, own: &Path, access: Option<b
         if access != Some(true) {
             ui.horizontal_wrapped(|ui| {
                 ui.label("To open and save files anywhere on the phone, allow SolidCraft to manage all files.");
-                if ui.button("Allow").clicked() {
+                if ui.button(tr("ui.agent_chat_allow")).clicked() {
                     action = Action::AskAccess;
                 }
             });
@@ -436,7 +438,7 @@ fn draw(ctx: &egui::Context, request: &mut Request, own: &Path, access: Option<b
         match request.kind {
             Kind::Save => {
                 ui.horizontal(|ui| {
-                    ui.label("Name");
+                    ui.label(tr_label("Name"));
                     let edit = ui.add(egui::TextEdit::singleline(&mut request.name).desired_width(f32::INFINITY));
                     if edit.changed() {
                         request.replace = None;
@@ -460,12 +462,12 @@ fn draw(ctx: &egui::Context, request: &mut Request, own: &Path, access: Option<b
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if request.kind == Kind::Save {
-                let label = if request.replace.is_some() { "Replace" } else { "Save" };
+                let label = if request.replace.is_some() { "Replace" } else { tr("ui.save") };
                 if ui.button(label).clicked() {
                     action = Action::Save;
                 }
             }
-            if ui.button("Cancel").clicked() {
+            if ui.button(tr("ui.cancel")).clicked() {
                 action = Action::Cancel;
             }
         });
