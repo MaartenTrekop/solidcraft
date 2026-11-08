@@ -1,0 +1,50 @@
+[package]
+name = "solidcraft-android"
+description = "SolidCraft on Android (NativeActivity, Vulkan or OpenGL ES through wgpu)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# The app is a shared library that Android's NativeActivity loads (libsolidcraft_android.so,
+# named in packaging/android/app/src/main/AndroidManifest.xml). On other systems the crate builds the
+# touch translation only, so its tests run with the rest of the workspace.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["raytrace-cpu", "bundled-render-library", "profile"]
+bundled-render-library = ["solidcraft-engine/bundled-render-library"]
+raytrace-cpu = ["solidcraft-engine/raytrace-cpu"]
+profile = ["solidcraft-engine/profile"]
+
+# The workspace lints, except unsafe_code: denied, not forbidden, so that src/android.rs
+# (`android_main`'s exported symbol, the environment set before any thread starts) and
+# src/storage.rs (the Java VM and activity pointers android-activity hands out) can allow it:
+# none has a safe API. Keep the rest in sync with [workspace.lints].
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+too_many_arguments = "allow"
+type_complexity = "allow"
+neg_cmp_op_on_partial_ord = "allow"
+
+[dependencies]
+egui = { workspace = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+solidcraft-engine = { workspace = true }
+solidcraft-ui-egui = { workspace = true }
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "android-native-activity"] }
+# The AndroidApp handle eframe needs (the workspace patches winit with vendor/winit).
+winit = { version = "0.30", default-features = false, features = ["android-native-activity"] }
+# "All files access" through the activity (src/storage.rs); already in the tree through
+# android-activity.
+jni = "0.22.4"
+log = { workspace = true }
+serde_json = { workspace = true }
+# The app's log in logcat (`adb logcat -s SolidCraft`).
+android_logger = ">=0.14, <0.16"

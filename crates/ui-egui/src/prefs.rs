@@ -2105,7 +2105,7 @@ fn theme_action(app: &mut SolveApp, ui: &mut egui::Ui, action: Option<&str>, act
             let text = solidcraft_engine::io::vfs::read_to_string(&path, crate::theme_files::MAX_BYTES).map_err(|e| e.to_string());
             import_theme_text(app, text);
         }),
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
         Some("paste") => {
             let text = arboard::Clipboard::new().and_then(|mut c| c.get_text()).unwrap_or_default();
             if looks_like_theme(&text) {

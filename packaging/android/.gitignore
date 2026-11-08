@@ -1,0 +1,6 @@
+.gradle/
+build/
+app/build/
+local.properties
+# Built by build.sh (cargo ndk), not kept.
+app/src/main/jniLibs/

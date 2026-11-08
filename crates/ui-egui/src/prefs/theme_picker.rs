@@ -186,7 +186,8 @@ fn row_contents(app: &mut SolveApp, ui: &mut egui::Ui) {
             if button.clicked() {
                 action = Some("import");
             }
-            #[cfg(not(target_arch = "wasm32"))]
+            // Android: no system clipboard to paste a theme from (arboard has none there).
+            #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
             ui_kit::Menu::context(&button, |ui| {
                 ui_kit::Menu::show(ui, t.form_card_width, |ui| {
                     if ui_kit::MenuItem::new("theme_paste", app.tr("prefs.theme_paste"), "paste").show(ui).clicked() {

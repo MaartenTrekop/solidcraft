@@ -732,6 +732,41 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
         let sign = crate::prefs::orbit_sign(app);
         orbit(app, rect, sign * f64::from(raw.shift_pan.x), sign * f64::from(raw.shift_pan.y), hover);
     }
+    // A touch screen (Android, touch laptops): two fingers turn the view when they drag together
+    // (pan it, on a page without orbit) or zoom when they pinch, whichever the gesture starts
+    // with; three or more pan. The host keeps the first finger from pressing the left button once
+    // a second one lands, so a gesture neither selects nor drags geometry.
+    let touch = ui.input(|i| i.multi_touch()).filter(|_| wheel_inside);
+    let touch_active = touch.is_some();
+    if let Some(touch) = touch {
+        app.cancel_view_animation();
+        app.viewport.orbit_free = None;
+        let drag = if touch.translation_delta.is_finite() { touch.translation_delta } else { egui::Vec2::ZERO };
+        match touch_gesture(ui.ctx(), &touch) {
+            TouchGesture::Turn if caps.orbit => {
+                if drag != egui::Vec2::ZERO {
+                    let sign = crate::prefs::orbit_sign(app);
+                    orbit(app, rect, sign * f64::from(drag.x), sign * f64::from(drag.y), Some(touch.start_pos));
+                }
+            }
+            TouchGesture::Turn | TouchGesture::Pan => {
+                if drag != egui::Vec2::ZERO {
+                    app.cam.pan(f64::from(drag.x), f64::from(drag.y), h);
+                }
+            }
+            TouchGesture::Zoom => {
+                let z = touch.zoom_delta;
+                if z.is_finite() && z > 0.0 && z != 1.0 {
+                    // Spread zooms in, as a trackpad pinch does.
+                    let f = f64::from(z).powf(-crate::prefs::zoom_sign(app));
+                    let anchor = zoom_anchor(app, rect, Some(touch.center_pos), caps.orbit);
+                    app.cam.zoom_at(f, anchor);
+                }
+            }
+            TouchGesture::Undecided => {}
+        }
+        ui.ctx().request_repaint();
+    }
     let zoom_held = (inside || app.viewport.zoom_shortcut_drag)
         && ui.input(|input| crate::keymap::drag_zoom_held(app, input))
         && !view_keys_blocked(app, ui.ctx(), Some(resp.id))
@@ -912,7 +947,7 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
             }
         }
     }
-    if !dragging && motion.is_none() && !(trackpad_orbit && app.viewport.trackpad_gesture) {
+    if !dragging && motion.is_none() && !touch_active && !(trackpad_orbit && app.viewport.trackpad_gesture) {
         app.viewport.orbit_pivot = None;
         app.viewport.orbit_from = None;
         app.viewport.cursor_wrap = None;
@@ -932,7 +967,7 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
                 i.stable_dt,
             )
         });
-        if pressed || key || dragging || motion.is_some() || !caps.orbit {
+        if pressed || key || dragging || motion.is_some() || touch_active || !caps.orbit {
             app.viewport.spin = false;
         } else {
             let pivot = spin_pivot(app, rect);
@@ -956,6 +991,59 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
     let inside = inside && !zoom_drag;
     let primary_nav = if zoom_drag { Some(NavMode::Zoom) } else { primary_nav };
     CameraInput { hover, scroll, mods, middle, secondary_down, primary_down, primary_pressed, inside, axes, pinch, pan, primary_nav, mode }
+}
+
+/// What a touch gesture does, decided once its fingers have moved far enough to tell.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+enum TouchGesture {
+    #[default]
+    Undecided,
+    Turn,
+    Zoom,
+    Pan,
+}
+
+/// The touch gesture under way: when it began (egui's start time tells a new gesture apart), what
+/// it does, and how far its fingers moved and spread while that was undecided.
+#[derive(Clone, Copy, Debug, Default)]
+struct TouchLock {
+    start: f64,
+    gesture: TouchGesture,
+    travel: f32,
+    spread: f32,
+}
+
+/// How far (points) a two-finger gesture moves before it is a turn or a zoom.
+const TOUCH_DECIDE: f32 = 10.0;
+/// A typical distance (points) between two fingers: a pinch's zoom factor times it is about how
+/// far the fingers moved apart.
+const TOUCH_SPAN: f32 = 150.0;
+
+/// Two fingers turn the view or zoom it, whichever they start doing, and keep to it until they
+/// lift: a pinch's drift doesn't turn the view, and a turn doesn't zoom. Three or more pan.
+fn touch_gesture(ctx: &egui::Context, touch: &egui::MultiTouchInfo) -> TouchGesture {
+    if touch.num_touches >= 3 {
+        return TouchGesture::Pan;
+    }
+    let id = egui::Id::new("sc_touch_gesture");
+    ctx.data_mut(|d| {
+        let lock = d.get_temp_mut_or_default::<TouchLock>(id);
+        if lock.start != touch.start_time {
+            *lock = TouchLock { start: touch.start_time, ..TouchLock::default() };
+        }
+        if lock.gesture == TouchGesture::Undecided {
+            if touch.translation_delta.is_finite() {
+                lock.travel += touch.translation_delta.length();
+            }
+            if touch.zoom_delta.is_finite() && touch.zoom_delta > 0.0 {
+                lock.spread += touch.zoom_delta.ln().abs() * TOUCH_SPAN;
+            }
+            if lock.travel.max(lock.spread) >= TOUCH_DECIDE {
+                lock.gesture = if lock.spread > lock.travel { TouchGesture::Zoom } else { TouchGesture::Turn };
+            }
+        }
+        lock.gesture
+    })
 }
 
 /// How close to the view's edge (points) an orbit drag moves the cursor to the other side.

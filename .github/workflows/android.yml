@@ -1,0 +1,84 @@
+# The Android app (apps/solidcraft-android, packaging/android): an APK for arm64 phones and
+# tablets, built on every push to the android branch and published as a pre-release, so it can be
+# downloaded and installed straight from the phone.
+name: Android
+
+on:
+  push:
+    branches: [android]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  touch:
+    name: Touch translation tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test -p solidcraft-android --lib
+
+  apk:
+    name: APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android
+          cache-on-failure: true
+
+      - name: cargo-ndk
+        run: cargo install cargo-ndk --version "^3" --locked
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.3"
+
+      - name: Build
+        env:
+          SOLIDCRAFT_VERSION_CODE: ${{ github.run_number }}
+          SOLIDCRAFT_VERSION_NAME: android-${{ github.run_number }}
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          echo "NDK: $ANDROID_NDK_HOME"
+          bash packaging/android/build.sh
+          cp packaging/android/app/build/outputs/apk/release/app-release.apk "SolidCraft-android-${{ github.run_number }}.apk"
+          ls -la SolidCraft-android-*.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SolidCraft-android-${{ github.run_number }}
+          path: SolidCraft-android-*.apk
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-${{ github.run_number }}
+          name: SolidCraft Android ${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          files: SolidCraft-android-*.apk
+          body: |
+            SolidCraft for Android (arm64), built from ${{ github.sha }}.
+
+            On the phone: download the APK below, open it and allow installing from your browser
+            or file manager when Android asks. A newer build installs over this one.
