@@ -742,7 +742,15 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
         app.cancel_view_animation();
         app.viewport.orbit_free = None;
         let drag = if touch.translation_delta.is_finite() { touch.translation_delta } else { egui::Vec2::ZERO };
-        match touch_gesture(ui.ctx(), &touch) {
+        // A touch screen first (the Android app): one finger turns the view (below, at the
+        // press), so two pan and pinch-zoom at once, the model following the fingers; three or
+        // more are the host's (a swipe undoes or redoes).
+        let gesture = if app.touch_first {
+            if touch.num_touches == 2 { TouchGesture::PanZoom } else { TouchGesture::Undecided }
+        } else {
+            touch_gesture(ui.ctx(), &touch)
+        };
+        match gesture {
             TouchGesture::Turn if caps.orbit => {
                 if drag != egui::Vec2::ZERO {
                     let sign = crate::prefs::orbit_sign(app);
@@ -754,14 +762,12 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
                     app.cam.pan(f64::from(drag.x), f64::from(drag.y), h);
                 }
             }
-            TouchGesture::Zoom => {
-                let z = touch.zoom_delta;
-                if z.is_finite() && z > 0.0 && z != 1.0 {
-                    // Spread zooms in, as a trackpad pinch does.
-                    let f = f64::from(z).powf(-crate::prefs::zoom_sign(app));
-                    let anchor = zoom_anchor(app, rect, Some(touch.center_pos), caps.orbit);
-                    app.cam.zoom_at(f, anchor);
+            TouchGesture::Zoom => touch_zoom(app, rect, &touch, caps.orbit),
+            TouchGesture::PanZoom => {
+                if drag != egui::Vec2::ZERO {
+                    app.cam.pan(f64::from(drag.x), f64::from(drag.y), h);
                 }
+                touch_zoom(app, rect, &touch, caps.orbit);
             }
             TouchGesture::Undecided => {}
         }
@@ -782,9 +788,9 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
     // A left press with the preset's keys (Alias: Shift+Alt) navigates until the button is let
     // go (kept through the release frame, so the end of the drag doesn't select either).
     if primary_pressed && inside && !zoom_drag {
-        let empty_space = |app: &SolveApp| {
+        let empty_at = |app: &SolveApp, at: Option<egui::Pos2>| {
             app.viewport.context_menu.is_none()
-                && hover.is_some_and(|p| {
+                && at.is_some_and(|p| {
                     // The free canvas owns navigation, including gray letterbox. Its
                     // invisible continuation of the camera ray contains no pickable scene.
                     if !picking || !rect.contains(p) {
@@ -796,6 +802,7 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
                         && (crate::render_workspace::active(app) || (crate::dim_view::hit(p).is_none() && crate::sketch_tools::glyph_at(p).is_none()))
                 })
         };
+        let empty_space = |app: &SolveApp| empty_at(app, hover);
         let openscad_orbit =
             app.preferences.nav == crate::prefs::OPENSCAD_NAV && app.tool.is_none() && app.dialog.is_none() && !mods.shift && empty_space(app);
         let preset = if app.preferences.nav != crate::prefs::OPENSCAD_NAV || openscad_orbit {
@@ -806,7 +813,22 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
         // Ctrl+left drag from empty space orbits in every preset (Cmd on macOS). A Ctrl+click
         // still selects, and Ctrl on geometry still drags it without snapping.
         let ctrl_orbit = (mods.ctrl || mods.command) && !mods.shift && !mods.alt && empty_space(app);
-        app.viewport.primary_nav = preset.or(ctrl_orbit.then_some(NavMode::Orbit));
+        // A touch screen first (the Android app): a finger dragged from empty space turns the
+        // view (pans it on a flat page), as in touch CAD apps. The host presses a finger that
+        // moves at once with the pointer already moved, and one held still before it moves
+        // without: held first, it draws a selection box, as before. A finger on geometry still
+        // picks or drags it, and while a sketch tool runs its drags draw (rectangles, circles):
+        // two fingers navigate there.
+        let finger_drag = app.touch_first
+            && app.tool.is_none()
+            && mods.is_none()
+            && ui.input(|i| {
+                i.any_touches()
+                    && i.pointer.press_origin().zip(i.pointer.latest_pos()).is_some_and(|(from, to)| from.distance(to) > FINGER_MOVED)
+            })
+            && empty_at(app, ui.input(|i| i.pointer.press_origin()));
+        let finger_nav = finger_drag.then_some(if caps.orbit { NavMode::Orbit } else { NavMode::Pan });
+        app.viewport.primary_nav = preset.or(ctrl_orbit.then_some(NavMode::Orbit)).or(finger_nav);
     } else if zoom_drag || (!primary_down && !primary_released) {
         app.viewport.primary_nav = None;
     }
@@ -993,7 +1015,8 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
     CameraInput { hover, scroll, mods, middle, secondary_down, primary_down, primary_pressed, inside, axes, pinch, pan, primary_nav, mode }
 }
 
-/// What a touch gesture does, decided once its fingers have moved far enough to tell.
+/// What a touch gesture does, decided once its fingers have moved far enough to tell (or, on a
+/// touch-first host, by how many there are).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 enum TouchGesture {
     #[default]
@@ -1001,6 +1024,22 @@ enum TouchGesture {
     Turn,
     Zoom,
     Pan,
+    /// Pan and pinch-zoom together (two fingers on a touch-first host).
+    PanZoom,
+}
+
+/// How far (points) the pointer has moved from a finger's press, at the press, for the finger to
+/// count as dragged at once rather than held first (the host presses a held finger before it moves).
+const FINGER_MOVED: f32 = 4.0;
+
+/// A pinch zooms about the middle of the fingers; spread zooms in, as a trackpad pinch does.
+fn touch_zoom(app: &mut SolveApp, rect: egui::Rect, touch: &egui::MultiTouchInfo, surface: bool) {
+    let z = touch.zoom_delta;
+    if z.is_finite() && z > 0.0 && z != 1.0 {
+        let f = f64::from(z).powf(-crate::prefs::zoom_sign(app));
+        let anchor = zoom_anchor(app, rect, Some(touch.center_pos), surface);
+        app.cam.zoom_at(f, anchor);
+    }
 }
 
 /// The touch gesture under way: when it began (egui's start time tells a new gesture apart), what

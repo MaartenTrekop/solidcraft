@@ -16,10 +16,18 @@ To build it yourself: `packaging/android/build.sh` (its first lines say what it 
 
 ## Using it
 
-- **Touch**: a tap is a click; one finger drags (geometry, a selection box, sliders, panels);
-  two fingers turn the view when they move together or zoom when they pinch, whichever they
-  start with; three fingers pan. Two fingers tapped together are a right click (context menus).
-  Holding a finger still is a held mouse button (Select Other).
+- **Touch**, as in touch CAD apps:
+  - one finger dragged from empty space turns the view (pans it on a flat page); on a face it
+    pulls it out or in (Extrude or cut, with Preferences › Tools › Direct interaction, on by
+    default here), on sketch geometry it drags it; a tap selects, a tap on empty space clears
+    the selection;
+  - two fingers pan, and pinch to zoom, at the same time;
+  - three fingers swiped left undo, swiped right redo;
+  - two fingers tapped together are a right click (context menus);
+  - a finger held still before it moves draws a selection box, and held longer opens Select
+    Other;
+  - while a sketch tool runs, one finger draws (a drag draws a rectangle or circle), so two
+    fingers navigate there.
 - **Back** is Escape: it cancels a tool or closes a dialog.
 - **Files**: Open and Save show SolidCraft's own file dialog. The first time, tap **Allow** and
   turn on "Allow access to manage all files" for SolidCraft: the app then opens and saves

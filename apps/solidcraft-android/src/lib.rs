@@ -6,8 +6,9 @@
 //! - files: an Open and Save dialog of its own over the phone's storage (src/files.rs), with
 //!   "All files access" asked for once (src/storage.rs), since the system chooser only hands out
 //!   content URIs the app's commands cannot read;
-//! - touch: one finger is the left mouse button, two or more fingers a camera gesture, a
-//!   two-finger tap a right click ([`touch`]); the Back button is Escape;
+//! - touch: a finger dragged from empty space turns the view, two fingers pan and zoom, a
+//!   two-finger tap is a right click and a three-finger swipe Undo or Redo ([`touch`],
+//!   `SolveApp::touch_first`); the Back button is Escape;
 //! - lifetime: settings and unsaved designs are kept whenever Android asks the app to save,
 //!   because it may end the process at any time once the app is in the background.
 //!

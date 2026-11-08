@@ -753,6 +753,11 @@ pub struct SolveApp {
     pub autosave_minutes: f64,
     /// The application bar is the window's title bar (Windows, Linux: no OS decorations).
     pub custom_titlebar: bool,
+    /// The host is a touch screen first (the Android app): a finger dragged from empty space
+    /// turns the view and two fingers pan and pinch-zoom together (`navigation::handle`); the
+    /// host turns a three-finger swipe into Undo or Redo. Off, touches navigate as on a laptop's
+    /// touch screen.
+    pub touch_first: bool,
     /// The OS hit test already offers the resize border ([`titlebar`]; the Windows desktop app),
     /// so no egui resize zones are laid out.
     pub native_resize_border: bool,
@@ -958,6 +963,7 @@ impl SolveApp {
             big_operation: false,
             autosave_minutes: 5.0,
             custom_titlebar: false,
+            touch_first: false,
             native_resize_border: false,
             integrated_titlebar: false,
             native_file_menu: false,

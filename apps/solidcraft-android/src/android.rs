@@ -20,6 +20,11 @@ const MSAA: u16 = 4;
 /// The interface scale of a first start: a tablet-sized screen at a phone's density leaves the
 /// desktop layout little room at 1. Preferences › Appearance changes it.
 const FIRST_UI_SCALE: f32 = 0.9;
+/// The settings key that records which of the Android app's own defaults were applied, so each is
+/// applied once (also to settings an older build saved) and a choice made since is kept.
+const DEFAULTS_KEY: &str = "solidcraft_android_defaults";
+/// 2: direct interaction (pull a face to extrude or cut) on, as in touch CAD apps.
+const DEFAULTS_VERSION: u32 = 2;
 
 /// Android's entry point: NativeActivity runs it on a thread of its own once the library is loaded.
 #[allow(unsafe_code)] // `no_mangle`: android-activity finds the function by its name.
@@ -151,10 +156,18 @@ impl Host {
         let files = Picker::new(android.clone(), own);
         let mut app = SolveApp::new(Session::default(), services(&files, &android, graphics_path));
         app.apply_off_thread = Some(solidcraft_ui_egui::dialogs::APPLY_AT_ONCE);
+        // A finger dragged from empty space turns the view, two fingers pan and pinch-zoom
+        // (`navigation::handle`); the touch router turns a three-finger swipe into Undo or Redo.
+        app.touch_first = true;
         let stored = cc.storage.and_then(|s| solidcraft_ui_egui::prefs::stored(|k| s.get_string(k)));
         match stored.as_deref() {
             Some(prefs) => app.load_prefs(prefs),
             None => app.preferences.ui_scale = FIRST_UI_SCALE,
+        }
+        let applied = cc.storage.and_then(|s| s.get_string(DEFAULTS_KEY)).and_then(|v| v.trim().parse::<u32>().ok()).unwrap_or(0);
+        if applied < 2 {
+            // Pull a face to extrude or cut it, as in touch CAD apps (Preferences › Tools).
+            app.preferences.direct_interaction = true;
         }
         match &cc.wgpu_render_state {
             Some(rs) => set_up_gpu(&mut app, rs, saved_samples),
@@ -286,6 +299,7 @@ impl eframe::App for Host {
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        storage.set_string(DEFAULTS_KEY, DEFAULTS_VERSION.to_string());
         match self.prefs_for_storage(storage) {
             Ok(prefs) => {
                 storage.set_string(solidcraft_ui_egui::prefs::STORAGE_KEY, prefs.clone());

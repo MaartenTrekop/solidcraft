@@ -1,5 +1,6 @@
-//! Fingers to pointer: one finger is the left mouse button, two or more are a camera gesture, and
-//! two fingers tapped together are a right click.
+//! Fingers to pointer: one finger is the left mouse button, two or more are a camera gesture, two
+//! fingers tapped together are a right click, and three fingers swiped left or right are Undo or
+//! Redo.
 //!
 //! egui-winit turns the first finger of a touch into the left button the moment it lands, so the
 //! second finger of a pinch arrives after the first has already pressed: on the model that starts
@@ -26,6 +27,10 @@ pub const HOLD: f64 = 0.15;
 
 /// The longest (seconds) two fingers may stay down and still be a tap (a right click).
 pub const TWO_FINGER_TAP: f64 = 0.4;
+
+/// How far (points) three fingers move sideways, and at least twice as far as up or down, to be
+/// a swipe: to the left Undo, to the right Redo, once per touch.
+pub const SWIPE: f32 = 60.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum State {
@@ -59,11 +64,14 @@ pub struct TouchRouter {
     release: Option<(Pos2, PointerButton)>,
     /// The keyboard's modifiers as the input last said (a Bluetooth keyboard's Shift or Ctrl).
     modifiers: Modifiers,
+    /// Three or more fingers down: where their middle was when the third landed, and whether
+    /// this touch has already swiped.
+    swipe: Option<(Pos2, bool)>,
 }
 
 impl Default for TouchRouter {
     fn default() -> Self {
-        Self { state: State::Idle, fingers: Vec::new(), release: None, modifiers: Modifiers::NONE }
+        Self { state: State::Idle, fingers: Vec::new(), release: None, modifiers: Modifiers::NONE, swipe: None }
     }
 }
 
@@ -138,6 +146,10 @@ impl TouchRouter {
                 if matches!(self.state, State::Gesture { .. }) {
                     self.point_at_centre(out);
                 }
+                if self.fingers.len() >= 3 {
+                    let swiped = self.swipe.is_some_and(|(_, swiped)| swiped);
+                    self.swipe = self.centre().map(|c| (c, swiped));
+                }
             }
             TouchPhase::Move => {
                 let Some(finger) = self.fingers.iter_mut().find(|f| f.id == id) else { return };
@@ -158,6 +170,16 @@ impl TouchRouter {
                             self.state = State::Gesture { tap: None };
                         }
                         self.point_at_centre(out);
+                        if self.fingers.len() >= 3
+                            && let Some((from, false)) = self.swipe
+                            && let Some(now) = self.centre()
+                        {
+                            let d = now - from;
+                            if d.x.abs() >= SWIPE && d.x.abs() >= 2.0 * d.y.abs() {
+                                undo_or_redo(d.x > 0.0, out);
+                                self.swipe = Some((from, true));
+                            }
+                        }
                     }
                     _ => {}
                 }
@@ -166,6 +188,10 @@ impl TouchRouter {
                 // A lifted finger says where it left; a cancelled one may not mean it.
                 let at = if phase == TouchPhase::End { pos } else { self.finger(id).map_or(pos, |f| f.at) };
                 self.fingers.retain(|f| f.id != id);
+                if self.fingers.len() < 3 {
+                    // Kept as swiped until every finger is up: one swipe per touch.
+                    self.swipe = self.swipe.filter(|(_, swiped)| *swiped && !self.fingers.is_empty());
+                }
                 match self.state {
                     State::Pending { id: first, at: down, .. } if first == id => {
                         if phase == TouchPhase::End {
@@ -215,12 +241,29 @@ impl TouchRouter {
 
     /// The pointer follows the middle of the fingers during a gesture: a pinch zooms about it.
     fn point_at_centre(&self, out: &mut Vec<Event>) {
+        if let Some(centre) = self.centre() {
+            out.push(Event::PointerMoved(centre));
+        }
+    }
+
+    /// The middle of the fingers down.
+    fn centre(&self) -> Option<Pos2> {
         if self.fingers.is_empty() {
-            return;
+            return None;
         }
         let n = self.fingers.len() as f32;
         let sum = self.fingers.iter().fold(egui::Vec2::ZERO, |s, f| s + f.at.to_vec2());
-        out.push(Event::PointerMoved((sum / n).to_pos2()));
+        Some((sum / n).to_pos2())
+    }
+}
+
+/// Undo (Ctrl+Z) or Redo (Ctrl+Y) as the keyboard asks for them, so they go where the keys go:
+/// a spline's last point first, nothing while a text field has the keyboard.
+fn undo_or_redo(redo: bool, out: &mut Vec<Event>) {
+    let key = if redo { Key::Y } else { Key::Z };
+    let modifiers = Modifiers { ctrl: true, command: true, ..Modifiers::NONE };
+    for pressed in [true, false] {
+        out.push(Event::Key { key, physical_key: Some(key), pressed, repeat: false, modifiers });
     }
 }
 
@@ -347,6 +390,51 @@ mod tests {
         frame(&mut r, 0.02, vec![touch(2, TouchPhase::Start, 60.0, 30.0)]);
         let lift = frame(&mut r, 1.0, vec![touch(1, TouchPhase::End, 20.0, 30.0), touch(2, TouchPhase::End, 60.0, 30.0)]);
         assert!(presses(&lift, PointerButton::Secondary).is_empty());
+    }
+
+    /// The keys a frame pressed, with Ctrl or not.
+    fn keys(events: &[Event]) -> Vec<(Key, bool)> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key { key, pressed: true, modifiers, .. } => Some((*key, modifiers.ctrl)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn three_fingers(r: &mut TouchRouter, dx: f32, dy: f32) -> Vec<Event> {
+        let mut all = frame(r, 0.0, vec![touch(1, TouchPhase::Start, 100.0, 100.0)]);
+        all.extend(frame(r, 0.01, vec![touch(2, TouchPhase::Start, 140.0, 100.0), touch(3, TouchPhase::Start, 180.0, 100.0)]));
+        for step in 1..=4 {
+            let f = step as f32 / 4.0;
+            let moves = (1..=3u64).map(|id| touch(id, TouchPhase::Move, 60.0 + 40.0 * id as f32 + dx * f, 100.0 + dy * f)).collect();
+            all.extend(frame(r, 0.02 + 0.02 * f64::from(step), moves));
+        }
+        all.extend(frame(r, 0.2, (1..=3u64).map(|id| touch(id, TouchPhase::End, 60.0 + 40.0 * id as f32 + dx, 100.0 + dy)).collect()));
+        all
+    }
+
+    #[test]
+    fn three_fingers_swiped_left_undo_once() {
+        let mut r = TouchRouter::default();
+        let all = three_fingers(&mut r, -150.0, 10.0);
+        assert_eq!(keys(&all), vec![(Key::Z, true)]);
+        assert!(buttons(&all).is_empty());
+        assert!(presses(&all, PointerButton::Secondary).is_empty());
+    }
+
+    #[test]
+    fn three_fingers_swiped_right_redo() {
+        let mut r = TouchRouter::default();
+        assert_eq!(keys(&three_fingers(&mut r, 150.0, -5.0)), vec![(Key::Y, true)]);
+    }
+
+    #[test]
+    fn three_fingers_moved_up_or_down_or_not_far_do_nothing() {
+        let mut r = TouchRouter::default();
+        assert!(keys(&three_fingers(&mut r, 40.0, 150.0)).is_empty());
+        assert!(keys(&three_fingers(&mut r, -30.0, 0.0)).is_empty());
     }
 
     #[test]
