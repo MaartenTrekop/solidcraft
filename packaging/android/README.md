@@ -31,6 +31,13 @@ is `packaging/android/build/SolidCraft.apk`.
     Other;
   - while a sketch tool runs, one finger draws (a drag draws a rectangle or circle), so two
     fingers navigate there.
+- **Pen mode**, for a stylus: the round pen button at the right edge (drag it anywhere) switches
+  it. A phone like the Fold 8 has no pen layer in its screen, so a stylus there is a capacitive
+  one that the phone sees as a finger; pen mode settles which is which by agreement. On, one touch
+  is the pen: it taps, selects, draws, drags geometry and draws selection boxes, but never turns
+  the view. Fingers navigate: two turn the view when they move together or zoom when they pinch
+  (whichever they start with), three pan. Undo and Redo buttons stand below the pen button, as
+  three fingers pan instead of swiping. The mode is kept between starts.
 - **Back** is Escape: it cancels a tool or closes a dialog.
 - **Files**: Open and Save show SolidCraft's own file dialog. The first time, tap **Allow** and
   turn on "Allow access to manage all files" for SolidCraft: the app then opens and saves

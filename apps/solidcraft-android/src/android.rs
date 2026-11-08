@@ -25,6 +25,10 @@ const FIRST_UI_SCALE: f32 = 0.9;
 const DEFAULTS_KEY: &str = "solidcraft_android_defaults";
 /// 2: direct interaction (pull a face to extrude or cut) on, as in touch CAD apps.
 const DEFAULTS_VERSION: u32 = 2;
+/// How far (points) a press may wander and still be a click: a fingertip wanders further than a
+/// pen's tip.
+const FINGER_CLICK: f32 = 12.0;
+const PEN_CLICK: f32 = 6.0;
 
 /// Android's entry point: NativeActivity runs it on a thread of its own once the library is loaded.
 #[allow(unsafe_code)] // `no_mangle`: android-activity finds the function by its name.
@@ -145,20 +149,23 @@ struct Host {
     touch: TouchRouter,
     files: Picker,
     prefs_writer: PrefsWriter,
+    /// Pen mode (src/pen.rs).
+    pen: bool,
 }
 
 impl Host {
     fn new(cc: &eframe::CreationContext<'_>, android: AndroidApp, own: PathBuf, graphics_path: &Path, saved_samples: Option<u16>) -> Self {
         solidcraft_ui_egui::fonts::setup_bundled_fonts(&cc.egui_ctx);
         solidcraft_ui_egui::fonts::load_system_fonts_in_background(&cc.egui_ctx);
-        // A fingertip wanders further than a mouse between press and release.
-        cc.egui_ctx.options_mut(|o| o.input_options.max_click_dist = 12.0);
+        let pen = cc.storage.and_then(|s| s.get_string(crate::pen::KEY)).is_some_and(|v| v.trim() == "1");
+        cc.egui_ctx.options_mut(|o| o.input_options.max_click_dist = if pen { PEN_CLICK } else { FINGER_CLICK });
         let files = Picker::new(android.clone(), own);
         let mut app = SolveApp::new(Session::default(), services(&files, &android, graphics_path));
         app.apply_off_thread = Some(solidcraft_ui_egui::dialogs::APPLY_AT_ONCE);
         // A finger dragged from empty space turns the view, two fingers pan and pinch-zoom
         // (`navigation::handle`); the touch router turns a three-finger swipe into Undo or Redo.
-        app.touch_first = true;
+        // In pen mode one touch is the pen, and fingers navigate as on a laptop's touch screen.
+        app.touch_first = !pen;
         let stored = cc.storage.and_then(|s| solidcraft_ui_egui::prefs::stored(|k| s.get_string(k)));
         match stored.as_deref() {
             Some(prefs) => app.load_prefs(prefs),
@@ -201,7 +208,17 @@ impl Host {
                 true,
             );
         }
-        Self { prefs_writer: PrefsWriter::read(app.prefs()), solve: app, touch: TouchRouter::default(), files }
+        Self { prefs_writer: PrefsWriter::read(app.prefs()), solve: app, touch: TouchRouter::default(), files, pen }
+    }
+
+    /// Pen mode on or off, saying so in the status bar with the gestures it leaves.
+    fn set_pen(&mut self, ctx: &egui::Context, pen: bool) {
+        self.pen = pen;
+        self.solve.touch_first = !pen;
+        ctx.options_mut(|o| o.input_options.max_click_dist = if pen { PEN_CLICK } else { FINGER_CLICK });
+        let _language = solidcraft_ui_egui::i18n::scope(&self.solve.preferences.language);
+        let message = solidcraft_ui_egui::i18n::tr(if pen { "ui.android_pen_on" } else { "ui.android_pen_off" }).to_string();
+        self.solve.set_status(message, false);
     }
 
     fn prefs_for_storage(&self, storage: &dyn eframe::Storage) -> Result<String, String> {
@@ -277,6 +294,7 @@ impl eframe::App for Host {
         touch::back_is_escape(raw);
         // Back closes an open file dialog first.
         self.files.take_escape(raw);
+        self.touch.set_pen(self.pen);
         if let Some(wait) = self.touch.route(raw) {
             ctx.request_repaint_after(Duration::from_secs_f64(wait));
         }
@@ -285,6 +303,16 @@ impl eframe::App for Host {
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         content_ui(&mut self.solve, ui);
+        let asked = crate::pen::buttons(ui.ctx(), self.pen);
+        if asked.toggle {
+            self.set_pen(ui.ctx(), !self.pen);
+        }
+        if asked.undo {
+            drop(self.solve.run("edit.undo", serde_json::json!({})));
+        }
+        if asked.redo {
+            drop(self.solve.run("edit.redo", serde_json::json!({})));
+        }
         self.files.show(ui.ctx(), &self.solve.preferences.language);
         // After the frame's UI, so a setting changed in it is written now: Android may end the
         // app without warning once it is in the background.
@@ -300,6 +328,7 @@ impl eframe::App for Host {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         storage.set_string(DEFAULTS_KEY, DEFAULTS_VERSION.to_string());
+        storage.set_string(crate::pen::KEY, if self.pen { "1" } else { "0" }.to_string());
         match self.prefs_for_storage(storage) {
             Ok(prefs) => {
                 storage.set_string(solidcraft_ui_egui::prefs::STORAGE_KEY, prefs.clone());

@@ -1,0 +1,10 @@
+{
+  "en": {
+    "ui.android_pen_off": "Finger mode: one finger turns the view, two fingers pan and zoom, three fingers swiped left or right undo or redo.",
+    "ui.android_pen_on": "Pen mode: one touch is the pen; two fingers turn or zoom the view, three fingers pan."
+  },
+  "nl": {
+    "ui.android_pen_off": "Vingermodus: één vinger draait het aanzicht, twee vingers pannen en zoomen, drie vingers naar links of rechts vegen maakt ongedaan of opnieuw.",
+    "ui.android_pen_on": "Penmodus: één aanraking is de pen; twee vingers draaien of zoomen het aanzicht, drie vingers pannen."
+  }
+}

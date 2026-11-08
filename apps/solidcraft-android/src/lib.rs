@@ -9,6 +9,8 @@
 //! - touch: a finger dragged from empty space turns the view, two fingers pan and zoom, a
 //!   two-finger tap is a right click and a three-finger swipe Undo or Redo ([`touch`],
 //!   `SolveApp::touch_first`); the Back button is Escape;
+//! - a stylus: pen mode (src/pen.rs), switched by a button at the screen's edge, makes one touch
+//!   the pen and leaves navigating to two and three fingers;
 //! - lifetime: settings and unsaved designs are kept whenever Android asks the app to save,
 //!   because it may end the process at any time once the app is in the background.
 //!
@@ -20,5 +22,7 @@ pub mod touch;
 mod android;
 #[cfg(target_os = "android")]
 mod files;
+#[cfg(target_os = "android")]
+mod pen;
 #[cfg(target_os = "android")]
 mod storage;

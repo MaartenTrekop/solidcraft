@@ -67,11 +67,13 @@ pub struct TouchRouter {
     /// Three or more fingers down: where their middle was when the third landed, and whether
     /// this touch has already swiped.
     swipe: Option<(Pos2, bool)>,
+    /// Pen mode: three fingers pan the view, so they don't swipe.
+    pen: bool,
 }
 
 impl Default for TouchRouter {
     fn default() -> Self {
-        Self { state: State::Idle, fingers: Vec::new(), release: None, modifiers: Modifiers::NONE, swipe: None }
+        Self { state: State::Idle, fingers: Vec::new(), release: None, modifiers: Modifiers::NONE, swipe: None, pen: false }
     }
 }
 
@@ -112,6 +114,11 @@ impl TouchRouter {
             _ if self.release.is_some() => Some(0.0),
             _ => None,
         }
+    }
+
+    /// Pen mode on or off (src/pen.rs): on, three fingers pan instead of swiping Undo and Redo.
+    pub fn set_pen(&mut self, pen: bool) {
+        self.pen = pen;
     }
 
     /// Whether a finger is down (or a tap's release is still to come).
@@ -171,6 +178,7 @@ impl TouchRouter {
                         }
                         self.point_at_centre(out);
                         if self.fingers.len() >= 3
+                            && !self.pen
                             && let Some((from, false)) = self.swipe
                             && let Some(now) = self.centre()
                         {
@@ -435,6 +443,13 @@ mod tests {
         let mut r = TouchRouter::default();
         assert!(keys(&three_fingers(&mut r, 40.0, 150.0)).is_empty());
         assert!(keys(&three_fingers(&mut r, -30.0, 0.0)).is_empty());
+    }
+
+    #[test]
+    fn in_pen_mode_three_fingers_do_not_swipe() {
+        let mut r = TouchRouter::default();
+        r.set_pen(true);
+        assert!(keys(&three_fingers(&mut r, -150.0, 0.0)).is_empty());
     }
 
     #[test]
